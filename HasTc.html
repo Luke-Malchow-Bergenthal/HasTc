@@ -1,0 +1,328 @@
+<head>
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script src="//code.jquery.com/jquery-1.10.2.js"></script>
+</head>
+
+<style>
+.text {
+  pointer-events: none;
+}
+</style>
+
+<script>
+alert('Welcome to HasTc:\n\nPlease type a Tc threshold (decimal), a delimeter for your upload, and then choose a file.\n\nYou can pan and zoom, click nodes and edges, and you can click "reset" if you want to change to a new Tc threshold or just to reset the graph.\n\nThanks.');
+
+var NAME = {};
+
+NAME.matrix = null;
+//The simulation
+NAME.force = null;
+//Defines how far clicking will zoom in
+NAME.zoomFactor = 4;
+
+//Dimensions of SVG
+NAME.width = window.innerWidth * 0.990;
+NAME.height = window.innerHeight * 0.85;
+
+//How the zoom behaves, calls redraw extent = bounds
+NAME.zm = d3.behavior.zoom().scaleExtent([0.25, 20]).on("zoom", redraw);
+
+//The svg
+NAME.svg = null;
+//Alias for svg dragging, etc
+NAME.vis = null;
+
+//Zoom and pan events carried out here
+function redraw(x, y) {
+
+    //If this is a normal zoom or pan event
+    if (x == null || y == null) {
+        NAME.vis.attr("transform",
+            "translate(" + d3.event.translate + ")" + " scale(" + d3.event.scale + ")");
+        //console.log(d3.event.translate);
+        //console.log(d3.event.scale);
+    }
+
+    //If this is a node click event
+    else {
+
+        //console.log(x,y)
+
+        NAME.zm.translate([(-parseInt(x) * NAME.zoomFactor + NAME.width / 2), (-parseInt(y) * NAME.zoomFactor + NAME.height / 2)])
+        NAME.zm.scale(NAME.zoomFactor)
+
+        NAME.vis.attr("transform", "translate(" + (-parseInt(x) * NAME.zoomFactor + NAME.width / 2) + "," + (-parseInt(y) * NAME.zoomFactor + NAME.height / 2) + ")scale(" + NAME.zoomFactor + ")");
+    }
+}
+
+NAME.read = function(evt){
+    //console.log("HELLO");
+    var file = document.getElementById('matrix-file').files[0];
+    //console.log(file);
+    NAME.getText(file);
+}
+
+NAME.getText = function(readFile) {
+    var reader = new FileReader();
+    reader.readAsText(readFile, "UTF-8");
+    //console.log(reader);
+    reader.onload = NAME.loaded;
+}
+
+NAME.loaded = function(evt) {
+    alert("File Loaded Successfully");
+    var fileString = evt.target.result;
+    //console.log(fileString);
+    //$("#test").text(fileString);
+    NAME.matrix = fileString;
+    NAME.main($('#delimeter').val(),$('#threshold').val());
+}
+NAME.reset = function() {
+    if(NAME.force != null){
+        NAME.force.stop();
+        alert("Resetting with current parameters");
+        NAME.main($('#delimeter').val(),$('#threshold').val());
+    }
+}
+NAME.main = function(delim,thresh) {
+	
+	var old = $('#network')[0];
+
+    //Purge old svg
+    if (old !== null && old !== undefined) {
+        old.parentNode.removeChild(old);
+        NAME.zm.translate([0, 0]);
+		NAME.zm.scale(1);
+		NAME.vis.attr("transform", "translate(0,0)scale(1)");
+		$("#box").html("Data displayed here");
+    }
+	
+	var nodes = [];
+	
+	if (isNaN(thresh)){
+        thresh = 0.0;
+    }
+	
+	if(delim == "\\t" || delim == "tab"){
+		delim = "\t";
+	}
+	
+	if(delim == ""){
+		delim = " ";
+	}
+    
+    var all = NAME.matrix.split('\n');
+    
+    //console.log(all[0]);
+    
+    var lines = []
+    
+    for (i in all){
+        lines.push(all[i].split(delim));
+    }
+    all = null;
+    //console.log(lines[0]);
+    
+    NAME.redundn = {};
+    NAME.redundall ={};
+    redundl = {};
+    
+    //MAKE REF IN LINKS ACTUAL NODES
+    index = 0
+    links = [];
+    for (i in lines){
+        if (lines[i][0] != lines[i][1] && parseFloat(lines[i][2]) >= thresh){
+            if(NAME.redundn[lines[i][0]] == undefined){
+                nodes.push({'name':lines[i][0],'id':index});
+				NAME.redundn[lines[i][0]] = index;
+				index++;
+            }
+            if(NAME.redundn[lines[i][1]] == undefined){
+                nodes.push({'name':lines[i][1],'id':index});
+				NAME.redundn[lines[i][1]] = index;
+				index++;
+            }
+        }
+        if(NAME.redundall[lines[i][0]] == undefined && lines[i][0]){
+            NAME.redundall[lines[i][0]] = true;
+        }
+        if(NAME.redundall[lines[i][1]] == undefined && lines[i][1]){
+            NAME.redundall[lines[i][1]] = true;
+        }
+    }
+    
+    all = "" + Object.keys(NAME.redundall).length;
+    chosen = "" + Object.keys(NAME.redundn).length;
+    
+    $('#exclude').html('Displaying ' + chosen + ' of ' + all);
+	
+	index = 0
+	for (i in lines){
+        if (lines[i][0] != lines[i][1] && parseFloat(lines[i][2]) >= thresh){
+			if (!redundl[lines[i][0] + "," + lines[i][1]] && !redundl[lines[i][1] + "," + lines[i][0]]){
+						links.push({'source':nodes[NAME.redundn[lines[i][0]]],'target':nodes[NAME.redundn[lines[i][1]]],'value':parseFloat(lines[i][2]),'id': 'l' + index});
+						redundl[lines[i][0] + "," + lines[i][1]] = true;
+						redundl[lines[i][1] + "," + lines[i][0]] = true;
+						index++;
+					}
+			}
+	}
+    
+    //NAME.redundn = null;
+    redundl = null;
+    lines = null;
+    
+	//console.log(nodes);
+	//console.log(links);
+	
+    //Init force simulation: Consider decreasing charge (more repulsion)
+    NAME.force = d3.layout.force()
+    //Link Distance "soft value," part of path
+    //.linkDistance(10)
+    //Tenacity of edges
+    .linkStrength(1)
+    //Dimensions
+    .size([NAME.width, NAME.height])
+    //.chargeDistance(100);
+    //Consider changing charge
+    .charge(-150);
+
+    //Init SVG
+    NAME.svg = d3.select("body").append("svg:svg")
+        .attr("width", NAME.width)
+        .attr("height", NAME.height)
+        .attr('id', 'network')
+    //Ensure functional zooming and panning
+    .call(NAME.zm);
+
+    //Alias for pan/zoom
+    NAME.vis = NAME.svg.append('g');
+    
+    NAME.force.nodes(nodes)
+        .links(links)
+        .linkDistance(function (d) {
+            return 60 - 20 * d.value;
+        })
+        .start();
+		
+	var link = NAME.vis.selectAll(".link")
+        .data(links)
+        .enter().append("line")
+        .attr("class", "link")
+		.style('stroke','#FF0000')
+        .attr("id", function (d) {
+       return d.id;
+    })
+    //Width = Value
+    .style("stroke-width", function (d) {
+        return d.value;
+    });
+	
+	//Init nodes
+    var node = NAME.vis.selectAll(".node")
+        .data(nodes)
+        .enter().append("circle")
+        .attr("class", "node")
+        .attr('id', function (d) {
+        return d.id
+    })
+        .attr("r", 5)
+        .style("fill", "#ffff00")
+		.attr('x', NAME.width / 2)
+        .attr('y', NAME.height / 2);
+		
+	var tooltips= d3.selectAll("line")
+      .append("title")
+        .classed("tooltip", true)
+        .text(function(d) { return d.value; });
+		
+	//Init text
+    var text = NAME.vis.selectAll(".text")
+        .data(nodes)
+        .enter()
+        .append("text")
+        .attr("class", "text");
+
+    var textLabels = text.attr("x", NAME.width / 2)
+        .attr("y", NAME.height / 2)
+        .text(function (d) {
+        return d.name;
+    })
+        .attr('id', function (d) {
+        return 't' + d.index
+    })
+        .attr("font-family", "sans-serif")
+        .attr("font-size", "6px")
+        .attr("style", "fill: 0F0F0F");
+
+		
+	//Titles for hovering
+    node.append("title")
+        .text(function (d) {
+        return d.name;
+    });
+	
+	node.on("click", function (d) {
+		$("#box").html("<a href = http://pubchem.ncbi.nlm.nih.gov/summary/summary.cgi?cid="+d.name + '>' + d.name + '</a>');
+	})
+    
+    node.on("mouseover",function(d){
+        $("#" + d.id).css("fill", '#0000FF');
+		$("#t" + d.id).css("font-size", '12px');
+    })
+    
+    node.on("mouseout",function(d){
+        $("#" + d.id).css("fill", '#FFFF00');
+		$("#t" + d.id).css("font-size", '8px');
+    })
+	
+	link.on("click",function(d){
+        $("#box").html("<a href = http://pubchem.ncbi.nlm.nih.gov/summary/summary.cgi?cid="+d.source.name + '>' + d.source.name + '</a>' + ' <=> ' + "<a href = http://pubchem.ncbi.nlm.nih.gov/summary/summary.cgi?cid="+d.target.name + '>' + d.target.name + '</a>: ' + d.value);
+    })
+    
+    link.on("mouseover",function(d){
+        $("#" + d.id).css("stroke", '#00FF00');
+        $("#" + d.id).css("stroke-width", parseFloat($("#" + d[6]).css("stroke-width"),10)*2);
+    })
+    
+    link.on("mouseout",function(d){
+        $("#" + d.id).css("stroke", '#FF0000');
+        $("#" + d.id).css("stroke-width", parseFloat($("#" + d[6]).css("stroke-width"),10)/2);
+    })
+    
+	//console.log(nodes);
+	//console.log(links);
+	
+    NAME.force.on("tick", function() {
+        link.attr("x1", function(d) { return d.source.x; })
+            .attr("y1", function(d) { return d.source.y; })
+            .attr("x2", function(d) { return d.target.x; })
+            .attr("y2", function(d) { return d.target.y; });
+
+        node.attr("cx", function(d) { return d.x; })
+            .attr("cy", function(d) { return d.y; });
+			
+		//Move text
+        textLabels.attr("x", function (d) { return d.x; })
+            .attr("y", function (d) { return d.y; });
+      });
+}
+
+</script>
+
+<body>
+    
+<label for = "matrix-file">Upload File</label>
+<input id="matrix-file" type="file" onchange="NAME.read();">
+
+<label for = "threshold">Choose threshold (Tc 0 - 1.0)</label>
+<input id="threshold" value = "0.8">
+
+<label for = "delimeter">Choose delimeter (default " ")</label>
+<input id = 'delimeter' value = " ">
+
+<button onclick="NAME.reset();">Reset</button>
+<br>
+<text id="box" style="font-family:'Trebuchet MS', Helvetica, sans-serif;font-size:32px;padding-left:8px;">Data displayed here</text>
+<text id="exclude" style="font-size:32px;padding-left:100px;">Number Excluded Here</text>
+</body>
